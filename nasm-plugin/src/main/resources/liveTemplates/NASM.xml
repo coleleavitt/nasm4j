@@ -1,0 +1,51 @@
+<templateSet group="NASM">
+    <template name="section" value="section .$SECTION$
+    $END$" description="Create a section" toReformat="false" toShortenFQNames="true">
+        <variable name="SECTION" expression="" defaultValue="&quot;data&quot;" alwaysStopAt="true" />
+        <context>
+            <option name="NASM" value="true" />
+        </context>
+    </template>
+
+    <template name="hello" value="section .data
+    msg db '$MESSAGE$', 0xA
+    msg_len equ $ - msg
+
+section .text
+    global _start
+
+_start:
+    ; Write system call
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [rel msg]
+    mov rdx, msg_len
+    syscall
+
+    ; Exit
+    mov rax, 60
+    mov rdi, 0
+    syscall" description="Hello World template" toReformat="false" toShortenFQNames="true">
+        <variable name="MESSAGE" expression="" defaultValue="&quot;Hello, World!&quot;" alwaysStopAt="true" />
+        <context>
+            <option name="NASM" value="true" />
+        </context>
+    </template>
+
+    <template name="syscall64" value="; $COMMENT$
+mov rax, $SYSCALL_NUM$    ; $SYSCALL_NAME$
+mov rdi, $ARG1$
+mov rsi, $ARG2$
+mov rdx, $ARG3$
+syscall" description="64-bit system call template" toReformat="false" toShortenFQNames="true">
+        <variable name="COMMENT" expression="" defaultValue="&quot;System call&quot;" alwaysStopAt="true" />
+        <variable name="SYSCALL_NUM" expression="" defaultValue="1" alwaysStopAt="true" />
+        <variable name="SYSCALL_NAME" expression="" defaultValue="&quot;sys_write&quot;" alwaysStopAt="true" />
+        <variable name="ARG1" expression="" defaultValue="1" alwaysStopAt="true" />
+        <variable name="ARG2" expression="" defaultValue="msg" alwaysStopAt="true" />
+        <variable name="ARG3" expression="" defaultValue="msg_len" alwaysStopAt="true" />
+        <context>
+            <option name="NASM" value="true" />
+        </context>
+    </template>
+</templateSet>

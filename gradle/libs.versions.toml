@@ -1,0 +1,44 @@
+# Version catalog is a central place for you to declare and version dependencies
+# https://docs.gradle.org/current/userguide/platforms.html#sub:version-catalog
+# https://docs.gradle.org/current/userguide/platforms.html#sub::toml-dependencies-format
+
+[versions]
+# Core Kotlin - matches IntelliJ 2025.2.2 compilation
+kotlin = "2.2.0"
+
+# Kotlin ecosystem libraries
+kotlinxDatetime = "0.6.2"
+kotlinxSerializationJSON = "1.8.1"
+kotlinxCoroutines = "1.10.2"
+
+# IntelliJ Platform - latest stable for plugin development
+intellijPlatform = "2.9.0"
+
+# Testing
+junit = "4.13.2"
+
+[libraries]
+# Kotlin Gradle Plugin
+kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+
+# Kotlinx ecosystem
+kotlinxDatetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinxDatetime" }
+kotlinxSerialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJSON" }
+kotlinxCoroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+
+# Testing libraries
+junit = { module = "junit:junit", version.ref = "junit" }
+
+[bundles]
+# Bundle related Kotlinx libraries together for easier import
+kotlinxEcosystem = ["kotlinxDatetime", "kotlinxSerialization", "kotlinxCoroutines"]
+
+[plugins]
+# Kotlin plugins
+kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlinPluginSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+
+# IntelliJ Platform plugins - 2.x series for modern plugin development
+intellijPlatform = { id = "org.jetbrains.intellij.platform", version.ref = "intellijPlatform" }
+intellijPlatformModule = { id = "org.jetbrains.intellij.platform.module", version.ref = "intellijPlatform" }
+intellijPlatformSettings = { id = "org.jetbrains.intellij.platform.settings", version.ref = "intellijPlatform" }

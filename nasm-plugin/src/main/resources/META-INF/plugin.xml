@@ -1,0 +1,59 @@
+<idea-plugin>
+    <id>com.cole.nasm</id>
+    <name>NASM Assembly Language Support</name>
+    <vendor email="your.email@domain.com" url="https://github.com/yourusername/nasm-plugin">Your Name</vendor>
+
+    <description><![CDATA[
+    Advanced NASM assembly language support for IntelliJ IDEA.
+
+    Features:
+    • Syntax highlighting with full NASM instruction set
+    • Code completion for instructions, registers, and directives
+    • Error highlighting and validation
+    • Go to definition for labels and symbols
+    • Find usages for labels and symbols
+    • Brace matching and code folding
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lang</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- File type registration -->
+        <fileType name="NASM Assembly"
+                  implementationClass="com.cole.nasm.language.NasmFileType"
+                  fieldName="INSTANCE"
+                  language="NASM"
+                  extensions="asm;s;nasm;inc"/>
+
+        <!-- Language registration -->
+        <lang.parserDefinition language="NASM"
+                               implementationClass="com.cole.nasm.language.NasmParserDefinition"/>
+
+        <!-- Syntax highlighter -->
+        <lang.syntaxHighlighterFactory language="NASM"
+                                       implementationClass="com.cole.nasm.highlight.NasmSyntaxHighlighterFactory"/>
+
+        <!-- Code completion -->
+        <completion.contributor language="NASM"
+                                implementationClass="com.cole.nasm.completion.NasmCompletionContributor"/>
+
+        <!-- Error annotation -->
+        <annotator language="NASM"
+                   implementationClass="com.cole.nasm.annotator.NasmAnnotator"/>
+
+        <!-- Structure view -->
+        <lang.psiStructureViewFactory language="NASM"
+                                      implementationClass="com.cole.nasm.structure.NasmStructureViewFactory"/>
+    </extensions>
+
+    <actions>
+        <action id="Nasm.Build"
+                class="com.cole.nasm.build.NasmBuildAction"
+                text="Build NASM"
+                description="Build NASM assembly file">
+            <add-to-group group-id="BuildMenu" anchor="after" relative-to-action="CompileDirty"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift F9"/>
+        </action>
+    </actions>
+</idea-plugin>

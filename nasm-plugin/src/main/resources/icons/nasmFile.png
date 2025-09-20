@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+  <rect width="16" height="16" fill="#3C3F41"/>
+  <text x="8" y="11" font-family="monospace" font-size="6" fill="#A9B7C6" text-anchor="middle">ASM</text>
+</svg>
+
