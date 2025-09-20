@@ -42,6 +42,10 @@
         <annotator language="NASM"
                    implementationClass="com.cole.nasm.annotator.NasmAnnotator"/>
 
+        <!-- Security annotation -->
+        <annotator language="NASM"
+                   implementationClass="com.cole.nasm.security.NasmSecurityAnnotator"/>
+
         <!-- Structure view -->
         <lang.psiStructureViewFactory language="NASM"
                                       implementationClass="com.cole.nasm.structure.NasmStructureViewFactory"/>
@@ -63,6 +67,10 @@
 
         <!-- Reference contributor -->
         <psi.referenceContributor implementation="com.cole.nasm.reference.NasmReferenceContributor"/>
+
+        <!-- Inlay hints -->
+        <codeInsight.inlayProvider language="NASM"
+                                   implementationClass="com.cole.nasm.hints.NasmInlayHintsProvider"/>
     </extensions>
 
     <actions>

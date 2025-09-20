@@ -3,6 +3,7 @@ package com.cole.nasm.documentation
 import com.intellij.lang.documentation.AbstractDocumentationProvider
 import com.intellij.psi.PsiElement
 import com.cole.nasm.lexer.NasmTokenTypes
+import com.cole.nasm.types.NasmTypeSystem
 
 class NasmDocumentationProvider : AbstractDocumentationProvider() {
 
@@ -10,12 +11,14 @@ class NasmDocumentationProvider : AbstractDocumentationProvider() {
         if (element == null) return null
 
         val tokenType = element.node?.elementType
-        val text = element.text.lowercase()
+        val text = element.text
 
         return when (tokenType) {
-            NasmTokenTypes.INSTRUCTION -> generateInstructionDoc(text)
-            NasmTokenTypes.REGISTER -> generateRegisterDoc(text)
-            NasmTokenTypes.DIRECTIVE -> generateDirectiveDoc(text)
+            NasmTokenTypes.INSTRUCTION -> generateInstructionDoc(text.lowercase())
+            NasmTokenTypes.REGISTER -> generateRegisterDoc(text.lowercase())
+            NasmTokenTypes.DIRECTIVE -> generateDirectiveDoc(text.lowercase())
+            NasmTokenTypes.IDENTIFIER -> generateIdentifierDoc(element, text)
+            NasmTokenTypes.NUMBER -> generateNumberDoc(text)
             else -> null
         }
     }
@@ -24,12 +27,14 @@ class NasmDocumentationProvider : AbstractDocumentationProvider() {
         if (element == null) return null
 
         val tokenType = element.node?.elementType
-        val text = element.text.lowercase()
+        val text = element.text
 
         return when (tokenType) {
-            NasmTokenTypes.INSTRUCTION -> getInstructionQuickInfo(text)
-            NasmTokenTypes.REGISTER -> getRegisterQuickInfo(text)
-            NasmTokenTypes.DIRECTIVE -> getDirectiveQuickInfo(text)
+            NasmTokenTypes.INSTRUCTION -> getInstructionQuickInfo(text.lowercase())
+            NasmTokenTypes.REGISTER -> getRegisterQuickInfo(text.lowercase())
+            NasmTokenTypes.DIRECTIVE -> getDirectiveQuickInfo(text.lowercase())
+            NasmTokenTypes.IDENTIFIER -> getIdentifierQuickInfo(element, text)
+            NasmTokenTypes.NUMBER -> getNumberQuickInfo(text)
             else -> null
         }
     }
@@ -234,9 +239,15 @@ class NasmDocumentationProvider : AbstractDocumentationProvider() {
     }
 
     private fun generateRegisterDoc(register: String): String? {
+        val type = NasmTypeSystem.inferRegisterType(register)
+        val typeInfo = if (type != null) {
+            "<p><strong>Type:</strong> ${NasmTypeSystem.getTypeHint(type)}</p>"
+        } else ""
+
         return when (register.lowercase()) {
             "eax", "ax", "al", "ah" -> """
                 <h3>EAX/AX/AL/AH - Accumulator Register</h3>
+                $typeInfo
                 <ul>
                     <li><strong>EAX:</strong> 32-bit accumulator</li>
                     <li><strong>AX:</strong> 16-bit accumulator (lower 16 bits of EAX)</li>
@@ -281,7 +292,17 @@ class NasmDocumentationProvider : AbstractDocumentationProvider() {
                 <p>Used as destination pointer for string operations and general addressing.</p>
             """.trimIndent()
 
-            else -> null
+            else -> {
+                // Generic register documentation using type system
+                val type = NasmTypeSystem.inferRegisterType(register)
+                if (type != null) {
+                    """
+                    <h3>${register.uppercase()} - Register</h3>
+                    <p><strong>Type:</strong> ${NasmTypeSystem.getTypeHint(type)}</p>
+                    <p>General-purpose register for data storage and manipulation.</p>
+                    """.trimIndent()
+                } else null
+            }
         }
     }
 
@@ -370,16 +391,19 @@ class NasmDocumentationProvider : AbstractDocumentationProvider() {
     }
 
     private fun getRegisterQuickInfo(register: String): String {
+        val type = NasmTypeSystem.inferRegisterType(register)
+        val typeHint = if (type != null) " (${NasmTypeSystem.getTypeHint(type)})" else ""
+
         return when (register.lowercase()) {
-            "eax", "ax", "al", "ah" -> "Accumulator register"
-            "ebx", "bx", "bl", "bh" -> "Base register"
-            "ecx", "cx", "cl", "ch" -> "Counter register"
-            "edx", "dx", "dl", "dh" -> "Data register"
-            "esp", "sp" -> "Stack pointer"
-            "ebp", "bp" -> "Base pointer"
-            "esi", "si" -> "Source index"
-            "edi", "di" -> "Destination index"
-            else -> "Register: $register"
+            "eax", "ax", "al", "ah" -> "Accumulator register$typeHint"
+            "ebx", "bx", "bl", "bh" -> "Base register$typeHint"
+            "ecx", "cx", "cl", "ch" -> "Counter register$typeHint"
+            "edx", "dx", "dl", "dh" -> "Data register$typeHint"
+            "esp", "sp" -> "Stack pointer$typeHint"
+            "ebp", "bp" -> "Base pointer$typeHint"
+            "esi", "si" -> "Source index$typeHint"
+            "edi", "di" -> "Destination index$typeHint"
+            else -> if (type != null) "${NasmTypeSystem.getTypeHint(type)}" else "Register: $register"
         }
     }
 
@@ -392,5 +416,85 @@ class NasmDocumentationProvider : AbstractDocumentationProvider() {
             "equ" -> "Define constant"
             else -> "Directive: $directive"
         }
+    }
+
+    private fun generateIdentifierDoc(element: PsiElement, identifier: String): String? {
+        // Check if it's a potential register
+        val registerType = NasmTypeSystem.inferRegisterType(identifier)
+        if (registerType != null) {
+            return generateRegisterDoc(identifier)
+        }
+
+        // Otherwise, it's likely a label or symbol
+        return """
+            <h3>$identifier - Symbol/Label</h3>
+            <p><strong>Type:</strong> Label or symbol reference</p>
+            <p>Assembly symbol that may refer to a memory location, function, or data.</p>
+        """.trimIndent()
+    }
+
+    private fun generateNumberDoc(number: String): String? {
+        val value = try {
+            when {
+                number.startsWith("0x") || number.startsWith("0X") ->
+                    number.substring(2).toLong(16)
+                number.startsWith("0b") || number.startsWith("0B") ->
+                    number.substring(2).toLong(2)
+                number.startsWith("0") && number.length > 1 && number.all { it.isDigit() } ->
+                    number.toLong(8)
+                else -> number.toLong()
+            }
+        } catch (e: NumberFormatException) {
+            return null
+        }
+
+        val type = NasmTypeSystem.getSmallestImmediateType(value)
+
+        return """
+            <h3>$number - Immediate Value</h3>
+            <p><strong>Decimal:</strong> $value</p>
+            <p><strong>Hexadecimal:</strong> 0x${value.toString(16).uppercase()}</p>
+            <p><strong>Binary:</strong> 0b${value.toString(2)}</p>
+            <p><strong>Type:</strong> ${NasmTypeSystem.getTypeHint(type)}</p>
+            <p><strong>Fits in:</strong> ${getCompatibleSizes(value)}</p>
+        """.trimIndent()
+    }
+
+    private fun getIdentifierQuickInfo(element: PsiElement, identifier: String): String {
+        // Check if it's a register
+        val registerType = NasmTypeSystem.inferRegisterType(identifier)
+        if (registerType != null) {
+            return getRegisterQuickInfo(identifier)
+        }
+
+        return "Symbol: $identifier"
+    }
+
+    private fun getNumberQuickInfo(number: String): String {
+        val value = try {
+            when {
+                number.startsWith("0x") || number.startsWith("0X") ->
+                    number.substring(2).toLong(16)
+                number.startsWith("0b") || number.startsWith("0B") ->
+                    number.substring(2).toLong(2)
+                number.startsWith("0") && number.length > 1 && number.all { it.isDigit() } ->
+                    number.toLong(8)
+                else -> number.toLong()
+            }
+        } catch (e: NumberFormatException) {
+            return "Invalid number: $number"
+        }
+
+        val type = NasmTypeSystem.getSmallestImmediateType(value)
+        return "${NasmTypeSystem.getTypeHint(type)} (decimal: $value)"
+    }
+
+    private fun getCompatibleSizes(value: Long): String {
+        val sizes = mutableListOf<String>()
+        if (value in -128L..255L) sizes.add("8-bit")
+        if (value in -32768L..65535L) sizes.add("16-bit")
+        if (value in -2147483648L..4294967295L) sizes.add("32-bit")
+        sizes.add("64-bit")
+        return sizes.joinToString(", ")
     }
 }

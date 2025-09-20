@@ -1,5 +1,6 @@
 package com.cole.nasm.annotator
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.ProcessOutput
@@ -7,6 +8,7 @@ import com.intellij.execution.util.ExecUtil
 import com.intellij.lang.annotation.AnnotationHolder
 import com.intellij.lang.annotation.Annotator
 import com.intellij.lang.annotation.HighlightSeverity
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
@@ -16,13 +18,21 @@ import com.intellij.psi.PsiWhiteSpace
 import com.intellij.psi.util.elementType
 import com.intellij.util.IncorrectOperationException
 import com.cole.nasm.lexer.NasmTokenTypes
+import com.cole.nasm.types.NasmTypeSystem
 import java.io.File
 import java.util.regex.Pattern
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ForkJoinPool
 
 class NasmAnnotator : Annotator {
 
     // Track which lines have NASM errors to avoid duplicate warnings
     private val nasmErrorLines = mutableSetOf<Int>()
+
+    // Thread-safe cache for NASM compilation results
+    private val compilationCache = ConcurrentHashMap<String, CompilationResult>()
+    private val compilationInProgress = ConcurrentHashMap<String, CompletableFuture<Void>>()
 
     companion object {
         private val VALID_INSTRUCTIONS = setOf(
@@ -227,12 +237,32 @@ class NasmAnnotator : Annotator {
     override fun annotate(element: PsiElement, holder: AnnotationHolder) {
         if (element is PsiWhiteSpace) return
 
-        // Run NASM compilation check once per file (only for the first non-whitespace element)
-        if (element.textOffset == 0) {
-            nasmErrorLines.clear()
-            runNasmCompilationCheck(element.containingFile, holder)
+        // Only run NASM compilation check for the root file element
+        if (element == element.containingFile) {
+            val file = element.containingFile
+            val fileContent = file.text
+            val cacheKey = "${file.name}:${fileContent.hashCode()}"
+            val cachedResult = compilationCache[cacheKey]
+            if (cachedResult != null) {
+                // Use cached NASM errors for annotation
+                applyCompilationErrors(cachedResult.errors, holder, file)
+            } else if (!compilationInProgress.containsKey(cacheKey)) {
+                // Start async NASM compilation in background thread
+                val future = CompletableFuture.runAsync({
+                    val errors = runNasmCompilationCheckSync(file)
+                    compilationCache[cacheKey] = CompilationResult(errors)
+                }, ForkJoinPool.commonPool())
+                compilationInProgress[cacheKey] = future
+                future.whenComplete { _, _ ->
+                    ApplicationManager.getApplication().invokeLater {
+                        DaemonCodeAnalyzer.getInstance(file.project).restart(file)
+                    }
+                    compilationInProgress.remove(cacheKey)
+                }
+            }
         }
 
+        // ...existing static validation code
         val tokenType = element.elementType
         val text = element.text.lowercase()
         val context = getContext(element)
@@ -369,6 +399,7 @@ class NasmAnnotator : Annotator {
 
                 // Validate operand compatibility
                 validateOperandCompatibility(element, operands[0], operands[1], holder)
+                validateOperandTypeCompatibility(element, operands[0], operands[1], holder)
 
                 // Instruction-specific validations
                 when (instruction.lowercase()) {
@@ -483,6 +514,7 @@ class NasmAnnotator : Annotator {
         validateSingleOperand(element, dest, "first", holder)
         validateSingleOperand(element, src, "second", holder)
         validateOperandCompatibility(element, dest, src, holder)
+        validateOperandTypeCompatibility(element, dest, src, holder)
     }
 
     private fun validateTestInstruction(element: PsiElement, operands: List<ParsedOperand>, holder: AnnotationHolder) {
@@ -830,6 +862,7 @@ class NasmAnnotator : Annotator {
 
         // Then validate compatibility
         validateOperandCompatibility(element, destOperand, srcOperand, holder)
+        validateOperandTypeCompatibility(element, destOperand, srcOperand, holder)
     }
 
     private fun validateSingleOperand(element: PsiElement, operand: ParsedOperand, position: String, holder: AnnotationHolder) {
@@ -976,6 +1009,56 @@ class NasmAnnotator : Annotator {
                     .range(element)
                     .create()
             }
+        }
+    }
+
+    private fun validateOperandTypeCompatibility(element: PsiElement, dest: ParsedOperand, src: ParsedOperand, holder: AnnotationHolder) {
+        // Get types using the type system
+        val destType = inferOperandType(dest)
+        val srcType = inferOperandType(src)
+
+        if (destType != null && srcType != null) {
+            if (!NasmTypeSystem.areTypesCompatible(destType, srcType)) {
+                val suggestion = NasmTypeSystem.suggestCompatibleTypes(destType, srcType)
+                val message = if (suggestion != null) {
+                    "Type mismatch: ${NasmTypeSystem.getTypeHint(destType)} ← ${NasmTypeSystem.getTypeHint(srcType)}. $suggestion"
+                } else {
+                    "Type mismatch: ${NasmTypeSystem.getTypeHint(destType)} ← ${NasmTypeSystem.getTypeHint(srcType)}"
+                }
+
+                holder.newAnnotation(HighlightSeverity.ERROR, message)
+                    .range(element)
+                    .create()
+            }
+        }
+    }
+
+    private fun inferOperandType(operand: ParsedOperand): NasmTypeSystem.NasmType? {
+        return when (operand.type) {
+            OperandType.REGISTER -> {
+                operand.register?.let { NasmTypeSystem.inferRegisterType(it) }
+            }
+            OperandType.IMMEDIATE -> {
+                operand.immediate?.value?.let { NasmTypeSystem.inferImmediateType(it) }
+            }
+            OperandType.MEMORY -> {
+                // Infer memory type from size or context
+                when (operand.size) {
+                    8 -> NasmTypeSystem.MemByte
+                    16 -> NasmTypeSystem.MemWord
+                    32 -> NasmTypeSystem.MemDword
+                    64 -> NasmTypeSystem.MemQword
+                    128 -> NasmTypeSystem.MemOword
+                    256 -> NasmTypeSystem.MemYword
+                    512 -> NasmTypeSystem.MemZword
+                    else -> NasmTypeSystem.MemDword // Default to DWORD
+                }
+            }
+            OperandType.LABEL -> {
+                // Labels could be code or data labels
+                NasmTypeSystem.CodeLabel
+            }
+            else -> null
         }
     }
 
@@ -2077,114 +2160,54 @@ class NasmAnnotator : Annotator {
 
     // ===== NASM COMPILATION CHECKING =====
 
-    private fun runNasmCompilationCheck(file: PsiFile, holder: AnnotationHolder) {
+    private fun runNasmCompilationCheckSync(file: PsiFile): List<CompilationError> {
+        val errors = mutableListOf<CompilationError>()
         try {
-            val document = file.viewProvider.document ?: return
-            val fileContent = document.text
-
-            // Create a temporary file with the content
             val tempFile = File.createTempFile("nasm_check", ".asm")
-            tempFile.writeText(fileContent)
-
-            try {
-                // Run NASM with syntax check only
-                val commandLine = GeneralCommandLine("nasm")
-                    .withParameters("-f", "elf64", tempFile.absolutePath, "-o", "/dev/null")
-
-                val result: ProcessOutput = ExecUtil.execAndGetOutput(commandLine)
-
-                if (result.exitCode != 0 && result.stderr.isNotBlank()) {
-                    parseNasmErrors(result.stderr, file.name, document, holder)
-                }
-
-            } finally {
-                tempFile.delete()
+            tempFile.writeText(file.text)
+            val process = ProcessBuilder(
+                "nasm", "-f", "elf64", tempFile.absolutePath, "-o", "/dev/null"
+            ).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exitCode = process.waitFor()
+            tempFile.delete()
+            if (exitCode != 0) {
+                parseNasmErrors(output, errors)
             }
-        } catch (e: Exception) {
-            // If NASM is not available or fails, silently ignore
-            // The static analysis will still provide basic validation
-        }
+        } catch (_: Exception) {}
+        return errors
     }
 
-    private fun parseNasmErrors(stderr: String, filename: String, document: com.intellij.openapi.editor.Document, holder: AnnotationHolder) {
-        for (line in stderr.lines()) {
-            if (line.isBlank()) continue
-
-            // NASM error format: filename:line: error: message
-            // or: filename:line: warning: message
-            val pattern = Pattern.compile(".*:(\\d+):\\s*(error|warning|fatal):\\s*(.+)")
-            val matcher = pattern.matcher(line)
-
-            if (matcher.matches()) {
-                val lineNum = matcher.group(1).toIntOrNull() ?: continue
-                val type = matcher.group(2).lowercase()
-                val message = matcher.group(3).trim()
-
-                val severity = when (type) {
-                    "error", "fatal" -> HighlightSeverity.ERROR
-                    "warning" -> HighlightSeverity.WARNING
-                    else -> HighlightSeverity.ERROR
-                }
-
-                try {
-                    val lineStartOffset = document.getLineStartOffset(lineNum - 1)
-                    val lineEndOffset = document.getLineEndOffset(lineNum - 1)
-                    val range = TextRange(lineStartOffset, lineEndOffset)
-
-                    // Track this line as having a NASM error
-                    nasmErrorLines.add(lineNum)
-
-                    holder.newAnnotation(severity, "NASM: $message")
-                        .range(range)
-                        .create()
-
-                } catch (e: Exception) {
-                    // Skip invalid line numbers
-                    continue
-                }
+    private fun applyCompilationErrors(errors: List<CompilationError>, holder: AnnotationHolder, file: PsiFile) {
+        val document = file.viewProvider.document ?: return
+        errors.forEach { error ->
+            val lineNum = error.line
+            if (lineNum > 0 && lineNum <= document.lineCount) {
+                val lineStart = document.getLineStartOffset(lineNum - 1)
+                val lineEnd = document.getLineEndOffset(lineNum - 1)
+                holder.newAnnotation(
+                    if (error.severity == "error") HighlightSeverity.ERROR else HighlightSeverity.WARNING,
+                    "NASM: ${error.message}"
+                ).range(TextRange(lineStart, lineEnd)).create()
             } else {
-                // Try alternative format: filename:line:column: error: message
-                val altPattern = Pattern.compile(".*:(\\d+):(\\d+):\\s*(error|warning|fatal):\\s*(.+)")
-                val altMatcher = altPattern.matcher(line)
-
-                if (altMatcher.matches()) {
-                    val lineNum = altMatcher.group(1).toIntOrNull() ?: continue
-                    val colNum = altMatcher.group(2).toIntOrNull()
-                    val type = altMatcher.group(3).lowercase()
-                    val message = altMatcher.group(4).trim()
-
-                    val severity = when (type) {
-                        "error", "fatal" -> HighlightSeverity.ERROR
-                        "warning" -> HighlightSeverity.WARNING
-                        else -> HighlightSeverity.ERROR
-                    }
-
-                    try {
-                        val lineStartOffset = document.getLineStartOffset(lineNum - 1)
-                        val lineEndOffset = document.getLineEndOffset(lineNum - 1)
-
-                        // Track this line as having a NASM error
-                        nasmErrorLines.add(lineNum)
-
-                        val range = if (colNum != null && colNum > 0) {
-                            // Highlight specific column if available
-                            val columnOffset = minOf(lineStartOffset + colNum - 1, lineEndOffset)
-                            TextRange(columnOffset, minOf(columnOffset + 10, lineEndOffset))
-                        } else {
-                            // Highlight entire line
-                            TextRange(lineStartOffset, lineEndOffset)
-                        }
-
-                        holder.newAnnotation(severity, "NASM: $message")
-                            .range(range)
-                            .create()
-
-                    } catch (e: Exception) {
-                        // Skip invalid line numbers
-                        continue
-                    }
-                }
+                holder.newAnnotation(HighlightSeverity.ERROR, "NASM: ${error.message}").create()
             }
         }
     }
+
+    private fun parseNasmErrors(output: String, errors: MutableList<CompilationError>) {
+        val lines = output.lines()
+        for (line in lines) {
+            val match = Regex(".*:(\\d+):\\s*(error|warning):\\s*(.+)").find(line)
+            if (match != null) {
+                val lineNumber = match.groupValues[1].toIntOrNull() ?: 0
+                val severity = match.groupValues[2]
+                val message = match.groupValues[3]
+                errors.add(CompilationError(lineNumber, severity, message))
+            }
+        }
+    }
+
+    data class CompilationError(val line: Int, val severity: String, val message: String)
+    data class CompilationResult(val errors: List<CompilationError>)
 }
