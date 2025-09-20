@@ -45,6 +45,24 @@
         <!-- Structure view -->
         <lang.psiStructureViewFactory language="NASM"
                                       implementationClass="com.cole.nasm.structure.NasmStructureViewFactory"/>
+
+        <!-- Go to declaration -->
+        <gotoDeclarationHandler implementation="com.cole.nasm.navigation.NasmGotoDeclarationHandler"/>
+
+        <!-- Find usages -->
+        <lang.findUsagesHandlerFactory language="NASM"
+                                       implementationClass="com.cole.nasm.search.NasmFindUsagesHandlerFactory"/>
+
+        <!-- Documentation provider -->
+        <lang.documentationProvider language="NASM"
+                                    implementationClass="com.cole.nasm.documentation.NasmDocumentationProvider"/>
+
+        <!-- Code folding -->
+        <lang.foldingBuilder language="NASM"
+                             implementationClass="com.cole.nasm.folding.NasmFoldingBuilder"/>
+
+        <!-- Reference contributor -->
+        <psi.referenceContributor implementation="com.cole.nasm.reference.NasmReferenceContributor"/>
     </extensions>
 
     <actions>

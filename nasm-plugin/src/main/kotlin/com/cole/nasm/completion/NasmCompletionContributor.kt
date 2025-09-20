@@ -10,9 +10,9 @@ import com.cole.nasm.lexer.NasmTokenTypes
 
 class NasmCompletionContributor : CompletionContributor() {
 
-    companion object {
+    private object Constants {
         // Complete instruction set
-        private val INSTRUCTIONS = listOf(
+        val INSTRUCTIONS = listOf(
             // Data movement
             "mov", "movsx", "movzx", "lea", "push", "pop", "pusha", "popa", "pushf", "popf",
             "xchg", "bswap", "xlat", "in", "out", "ins", "outs",
@@ -75,7 +75,7 @@ class NasmCompletionContributor : CompletionContributor() {
             "fclex", "fnclex", "fstenv", "fnstenv", "fldenv", "fsave", "fnsave", "frstor"
         )
 
-        private val DIRECTIVES = listOf(
+        val DIRECTIVES = listOf(
             "section", "segment", "global", "extern", "export", "import",
             "times", "db", "dw", "dd", "dq", "dt", "do", "dy", "dz",
             "resb", "resw", "resd", "resq", "rest", "reso", "resy", "resz",
@@ -96,7 +96,7 @@ class NasmCompletionContributor : CompletionContributor() {
             "default", "cpu", "float", "warning", "map", "library"
         )
 
-        private val REGISTERS = listOf(
+        val REGISTERS = listOf(
             // 8-bit registers
             "al", "bl", "cl", "dl", "ah", "bh", "ch", "dh",
             "spl", "bpl", "sil", "dil",
@@ -138,7 +138,7 @@ class NasmCompletionContributor : CompletionContributor() {
             "ymm8", "ymm9", "ymm10", "ymm11", "ymm12", "ymm13", "ymm14", "ymm15"
         )
 
-        private val COMMON_CONSTANTS = listOf(
+        val COMMON_CONSTANTS = listOf(
             "byte", "word", "dword", "qword", "tword", "oword", "yword", "zword",
             "ptr", "offset", "seg", "short", "near", "far",
             "strict", "nosplit", "rel", "abs", "o16", "o32", "o64", "a16", "a32", "a64"
@@ -146,57 +146,291 @@ class NasmCompletionContributor : CompletionContributor() {
     }
 
     init {
-        // Completion for any position
+        // Smart instruction completion with operands
         extend(
             CompletionType.BASIC,
             PlatformPatterns.psiElement().withLanguage(NasmLanguage),
-            object : CompletionProvider<CompletionParameters>() {
-                override fun addCompletions(
-                    parameters: CompletionParameters,
-                    context: ProcessingContext,
-                    result: CompletionResultSet
-                ) {
-                    val position = parameters.position
-                    val prevElement = position.prevSibling
-
-                    // Add instructions
-                    INSTRUCTIONS.forEach { instruction ->
-                        result.addElement(
-                            LookupElementBuilder.create(instruction)
-                                .withTypeText("instruction")
-                                .withIcon(com.intellij.icons.AllIcons.Nodes.Function)
-                                .bold()
-                        )
-                    }
-
-                    // Add directives
-                    DIRECTIVES.forEach { directive ->
-                        result.addElement(
-                            LookupElementBuilder.create(directive)
-                                .withTypeText("directive")
-                                .withIcon(com.intellij.icons.AllIcons.Nodes.Annotationtype)
-                        )
-                    }
-
-                    // Add registers
-                    REGISTERS.forEach { register ->
-                        result.addElement(
-                            LookupElementBuilder.create(register)
-                                .withTypeText("register")
-                                .withIcon(com.intellij.icons.AllIcons.Nodes.Variable)
-                        )
-                    }
-
-                    // Add common constants
-                    COMMON_CONSTANTS.forEach { constant ->
-                        result.addElement(
-                            LookupElementBuilder.create(constant)
-                                .withTypeText("constant")
-                                .withIcon(com.intellij.icons.AllIcons.Nodes.Constant)
-                        )
-                    }
-                }
-            }
+            InstructionCompletionProvider()
         )
+
+        // Register completion for operand positions
+        extend(
+            CompletionType.BASIC,
+            PlatformPatterns.psiElement().withLanguage(NasmLanguage),
+            RegisterCompletionProvider()
+        )
+
+        // Label completion
+        extend(
+            CompletionType.BASIC,
+            PlatformPatterns.psiElement().withLanguage(NasmLanguage),
+            LabelCompletionProvider()
+        )
+
+        // Directive completion
+        extend(
+            CompletionType.BASIC,
+            PlatformPatterns.psiElement().withLanguage(NasmLanguage),
+            DirectiveCompletionProvider()
+        )
+    }
+
+    private class InstructionCompletionProvider : CompletionProvider<CompletionParameters>() {
+        override fun addCompletions(
+            parameters: CompletionParameters,
+            context: ProcessingContext,
+            result: CompletionResultSet
+        ) {
+            // Check if we're at the beginning of a line (instruction position)
+            if (!isInstructionPosition(parameters.position)) return
+
+            // Add common instruction patterns with live templates
+            addInstructionTemplate(result, "mov", "mov eax, ebx", "Move register to register")
+            addInstructionTemplate(result, "add", "add eax, 10", "Add immediate to register")
+            addInstructionTemplate(result, "sub", "sub eax, ebx", "Subtract registers")
+            addInstructionTemplate(result, "cmp", "cmp eax, 0", "Compare with zero")
+            addInstructionTemplate(result, "push", "push eax", "Push register")
+            addInstructionTemplate(result, "pop", "pop eax", "Pop to register")
+            addInstructionTemplate(result, "call", "call function_name", "Call function")
+            addInstructionTemplate(result, "jmp", "jmp label", "Jump to label")
+            addInstructionTemplate(result, "je", "je label", "Jump if equal")
+            addInstructionTemplate(result, "jne", "jne label", "Jump if not equal")
+            addInstructionTemplate(result, "loop", "loop label", "Loop instruction")
+            addInstructionTemplate(result, "int", "int 0x80", "Software interrupt")
+
+            // Add all instructions
+            Constants.INSTRUCTIONS.forEach { instruction ->
+                result.addElement(
+                    LookupElementBuilder.create(instruction)
+                        .withTypeText("instruction")
+                        .withIcon(com.intellij.icons.AllIcons.Nodes.Function)
+                        .bold()
+                )
+            }
+        }
+
+        private fun addInstructionTemplate(
+            result: CompletionResultSet,
+            instruction: String,
+            template: String,
+            description: String
+        ) {
+            result.addElement(
+                LookupElementBuilder.create(instruction)
+                    .withTypeText(description)
+                    .withIcon(com.intellij.icons.AllIcons.Nodes.Function)
+                    .withInsertHandler { context, _ ->
+                        val editor = context.editor
+                        val startOffset = context.startOffset
+                        val endOffset = context.tailOffset
+
+                        // Replace with template
+                        editor.document.replaceString(startOffset, endOffset, template)
+
+                        // Position cursor at first operand
+                        val spaceIndex = template.indexOf(' ')
+                        if (spaceIndex > 0) {
+                            editor.caretModel.moveToOffset(startOffset + spaceIndex + 1)
+                        }
+                    }
+                    .bold()
+            )
+        }
+
+        private fun isInstructionPosition(element: PsiElement): Boolean {
+            // Check if we're at the beginning of a line or after whitespace only
+            val line = NasmCompletionContributor.getLineText(element)
+            val beforeCursor = line.substring(0, element.textOffset - NasmCompletionContributor.getLineStartOffset(element))
+            return beforeCursor.trim().isEmpty()
+        }
+    }
+
+    private class RegisterCompletionProvider : CompletionProvider<CompletionParameters>() {
+        override fun addCompletions(
+            parameters: CompletionParameters,
+            context: ProcessingContext,
+            result: CompletionResultSet
+        ) {
+            // Add registers with size information
+            Constants.REGISTERS.forEach { register ->
+                val size = getRegisterSize(register)
+                result.addElement(
+                    LookupElementBuilder.create(register)
+                        .withTypeText("$size-bit register")
+                        .withIcon(com.intellij.icons.AllIcons.Nodes.Variable)
+                        .withTailText(" ($size-bit)", true)
+                )
+            }
+        }
+
+        private fun getRegisterSize(register: String): Int {
+            return when {
+                register.endsWith("b") || register.length == 2 && register[1] in "lh" -> 8
+                register.startsWith("r") && register.endsWith("w") -> 16
+                register.length == 2 && !register.endsWith("b") -> 16
+                register.startsWith("e") || register.endsWith("d") -> 32
+                register.startsWith("r") && register.length <= 3 -> 64
+                register.startsWith("xmm") -> 128
+                register.startsWith("ymm") -> 256
+                register.startsWith("zmm") -> 512
+                else -> 32
+            }
+        }
+    }
+
+    private class LabelCompletionProvider : CompletionProvider<CompletionParameters>() {
+        override fun addCompletions(
+            parameters: CompletionParameters,
+            context: ProcessingContext,
+            result: CompletionResultSet
+        ) {
+            val file = parameters.originalFile
+            val labels = findAllLabelsInFile(file)
+
+            labels.forEach { label ->
+                result.addElement(
+                    LookupElementBuilder.create(label.name)
+                        .withTypeText("label")
+                        .withIcon(com.intellij.icons.AllIcons.Nodes.Method)
+                        .withTailText(" (line ${label.line})", true)
+                )
+            }
+        }
+
+        private fun findAllLabelsInFile(file: PsiElement): List<LabelInfo> {
+            val labels = mutableListOf<LabelInfo>()
+
+            file.accept(object : com.intellij.psi.PsiRecursiveElementWalkingVisitor() {
+                override fun visitElement(element: PsiElement) {
+                    when (element.node?.elementType) {
+                        NasmTokenTypes.LABEL -> {
+                            val labelName = element.text.removeSuffix(":")
+                            val lineNumber = NasmCompletionContributor.getLineNumber(element)
+                            labels.add(LabelInfo(labelName, lineNumber))
+                        }
+                        NasmTokenTypes.IDENTIFIER -> {
+                            val line = NasmCompletionContributor.getLineText(element)
+                            if (isSymbolDefinition(line, element.text)) {
+                                val lineNumber = NasmCompletionContributor.getLineNumber(element)
+                                labels.add(LabelInfo(element.text, lineNumber))
+                            }
+                        }
+                    }
+                    super.visitElement(element)
+                }
+            })
+
+            return labels
+        }
+
+        private fun isSymbolDefinition(line: String, symbolName: String): Boolean {
+            val dataDirectives = setOf(
+                "db", "dw", "dd", "dq", "dt", "do", "dy", "dz",
+                "resb", "resw", "resd", "resq", "rest", "reso", "resy", "resz"
+            )
+
+            val dataDefPattern = Regex("^\\s*${Regex.escape(symbolName)}\\s+(${dataDirectives.joinToString("|")})\\b")
+            val equPattern = Regex("^\\s*${Regex.escape(symbolName)}\\s+equ\\b", RegexOption.IGNORE_CASE)
+
+            return dataDefPattern.find(line) != null || equPattern.find(line) != null
+        }
+
+        data class LabelInfo(val name: String, val line: Int)
+    }
+
+    private class DirectiveCompletionProvider : CompletionProvider<CompletionParameters>() {
+        override fun addCompletions(
+            parameters: CompletionParameters,
+            context: ProcessingContext,
+            result: CompletionResultSet
+        ) {
+            // Add directive templates
+            addDirectiveTemplate(result, "section", "section .text", "Code section")
+            addDirectiveTemplate(result, "section", "section .data", "Data section")
+            addDirectiveTemplate(result, "section", "section .bss", "BSS section")
+            addDirectiveTemplate(result, "global", "global _start", "Global symbol")
+            addDirectiveTemplate(result, "extern", "extern function_name", "External symbol")
+            addDirectiveTemplate(result, "db", "db 'string', 0", "Define byte string")
+            addDirectiveTemplate(result, "dw", "dw 1000", "Define word")
+            addDirectiveTemplate(result, "dd", "dd 100000", "Define doubleword")
+            addDirectiveTemplate(result, "equ", "CONSTANT equ 42", "Define constant")
+
+            // Add all directives
+            Constants.DIRECTIVES.forEach { directive ->
+                result.addElement(
+                    LookupElementBuilder.create(directive)
+                        .withTypeText("directive")
+                        .withIcon(com.intellij.icons.AllIcons.Nodes.Annotationtype)
+                )
+            }
+
+            // Add common constants
+            Constants.COMMON_CONSTANTS.forEach { constant ->
+                result.addElement(
+                    LookupElementBuilder.create(constant)
+                        .withTypeText("constant")
+                        .withIcon(com.intellij.icons.AllIcons.Nodes.Constant)
+                )
+            }
+        }
+
+        private fun addDirectiveTemplate(
+            result: CompletionResultSet,
+            directive: String,
+            template: String,
+            description: String
+        ) {
+            result.addElement(
+                LookupElementBuilder.create("$directive (template)")
+                    .withTypeText(description)
+                    .withIcon(com.intellij.icons.AllIcons.Nodes.Annotationtype)
+                    .withPresentableText(template)
+                    .withInsertHandler { context, _ ->
+                        val editor = context.editor
+                        val startOffset = context.startOffset
+                        val endOffset = context.tailOffset
+
+                        editor.document.replaceString(startOffset, endOffset, template)
+
+                        // Position cursor appropriately
+                        when (directive) {
+                            "section" -> {
+                                // Cursor after "section "
+                                editor.caretModel.moveToOffset(startOffset + template.length)
+                            }
+                            "equ" -> {
+                                // Select "CONSTANT"
+                                editor.caretModel.moveToOffset(startOffset)
+                                editor.selectionModel.setSelection(startOffset, startOffset + 8)
+                            }
+                            else -> {
+                                editor.caretModel.moveToOffset(startOffset + template.length)
+                            }
+                        }
+                    }
+            )
+        }
+    }
+
+    companion object {
+        private fun getLineText(element: PsiElement): String {
+            val file = element.containingFile
+            val document = file.viewProvider.document ?: return ""
+            val lineNumber = document.getLineNumber(element.textOffset)
+            val lineStart = document.getLineStartOffset(lineNumber)
+            val lineEnd = document.getLineEndOffset(lineNumber)
+            return document.getText().substring(lineStart, lineEnd)
+        }
+
+        private fun getLineStartOffset(element: PsiElement): Int {
+            val document = element.containingFile.viewProvider.document ?: return 0
+            val lineNumber = document.getLineNumber(element.textOffset)
+            return document.getLineStartOffset(lineNumber)
+        }
+
+        private fun getLineNumber(element: PsiElement): Int {
+            val document = element.containingFile.viewProvider.document ?: return 0
+            return document.getLineNumber(element.textOffset) + 1
+        }
     }
 }
